@@ -30,6 +30,9 @@ const client: StreamClient = new StreamClient(
 const app: Express = express();
 app.use(express.json());
 
+app.get("/", (req: Request, res: Response) => {
+  res.send("Stream Feeds Backend is running");
+});
 // Token generation endpoint
 app.post("/generate-token", async (req: Request, res: Response) => {
   const { userId }: { userId?: string } = req.body;
@@ -87,10 +90,26 @@ app.post("/getFeed", async (req: Request, res: Response) => {
   }: { feedGroup: string; userId: string; feedGroupId: string } = req.body;
   try {
     const feed: StreamFeed = client.feeds.feed(feedGroup, feedGroupId);
+    // const feed: StreamFeed = client.feeds.getOrCreateFeed(
+    // {
+
+    //   feed_group_id : feedGroup,feed_id: feedGroupId,
+    // }
+    // );
 
     // This will create the feed if it doesn't exist
     // either one of user_id or user is required for server side
-    const feedData = await feed.getOrCreate({ limit: 10, user_id: userId });
+    const feedData = await feed.getOrCreate({
+      limit: 10,
+      user_id: userId,
+      activity_selector_options: {
+        type: "tvs",
+      },
+
+      external_ranking: {
+        decay_exp: 1,
+      },
+    });
     res.json(feedData);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -101,7 +120,7 @@ app.post("/getFeed", async (req: Request, res: Response) => {
 app.get("/feeds", async (req: Request, res: Response) => {
   try {
     const userFeed = await client.feeds.getOrCreateFeedGroup({
-      id: "mmt",
+      id: "community",
     });
     console.log("Feed data:", userFeed);
     return res.json(userFeed);
@@ -110,11 +129,31 @@ app.get("/feeds", async (req: Request, res: Response) => {
   }
 });
 
-// create feed group
-app.get("/create-feed", async (req: Request, res: Response) => {
+//get feed group details
+app.put("/feed-group", async (req: Request, res: Response) => {
   try {
+    const { groupId }: { groupId: string } = req.body;
+    const response = await client.feeds.updateFeedGroup({
+      id: groupId,
+      activity_selectors: [{ type: "current_feed" }],
+      ranking: {
+        type: "recency",
+      },
+      activity_processors: [{ type: "text_interest_tags" }],
+    });
+
+    return res.json(response);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// create feed group
+app.post("/create-feed", async (req: Request, res: Response) => {
+  try {
+    const { groupId }: { groupId: string } = req.body;
     const response1 = await client.feeds.createFeedGroup({
-      id: "mytimeline",
+      id: groupId,
       activity_processors: [
         { type: "text_interest_tags" },
         { type: "image_interest_tags" },
@@ -124,10 +163,10 @@ app.get("/create-feed", async (req: Request, res: Response) => {
         { type: "following" },
         { type: "interest" },
       ],
-      ranking: {
-        type: "interest",
-        score: "decay_linear(time) * interest_score * decay_linear(popularity)",
-      },
+      // ranking: {
+      //   type: "interest",
+      //   score: "decay_linear(time) * interest_score * decay_linear(popularity)",
+      // },
     });
 
     res.json({ message: "Feed created successfully", response1 });
@@ -137,23 +176,52 @@ app.get("/create-feed", async (req: Request, res: Response) => {
   }
 });
 
+// app.post("/pin-activity", async (req: Request, res: Response) => {
+//   try {
+//     const { feedGroup, feedId }: { feedGroup: string; feedId: string } = req.body;
+//   const data = await   client.feeds.pinActivity({
+//   feed_group_id: feedGroup,
+//   feed_id: feedId,
+//   activity_id: activity_id,
+//   user_id: user_id,
+// });
+// /
+//     res.json({ message: "Activity pinned successfully", response });
+//   }
+//   catch (err: any) {
+//     console.error("Error pinning activity:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+
 // Add members to a feed
 // userId is the id of the user to be added as a member
 // feed_group_id is the id of the feed group
 // Example: For public community feedGroup is "community" and feedGroupId is "public"
 app.post("/add-members-to-feed", async (req: Request, res: Response) => {
   try {
-    const { userId }: { userId: string } = req.body;
+    const {
+      userId,
+      feedGroupId,
+      feedId,
+      createFeed,
+    }: {
+      userId: string;
+      feedGroupId: string;
+      feedId: string;
+      createFeed?: boolean;
+    } = req.body;
 
-    // First create feed if not exists
-    // const userFeed: StreamFeed = client.feeds.feed("mmt", userId);
-    // const activities = await userFeed.getOrCreate({
-    //   limit: 10,
-    //   user_id: userId,
-    // });
+    if (createFeed === true) {
+      const userFeed: StreamFeed = client.feeds.feed(feedGroupId, feedId);
+      const newCreatedFeed = await userFeed.getOrCreate({
+        limit: 10,
+        user_id: userId,
+      });
+    }
     const feed = await client.feeds.updateFeedMembers({
-      feed_group_id: "community",
-      feed_id: "public",
+      feed_group_id: feedGroupId,
+      feed_id: feedId,
       operation: "upsert",
       members: [
         {
@@ -171,6 +239,38 @@ app.post("/add-members-to-feed", async (req: Request, res: Response) => {
     res.json({ message: "Members added successfully", feed });
   } catch (err: any) {
     console.error("Error adding members:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put("/update-user-role", async (req: Request, res: Response) => {
+  try {
+    const {
+      userId,
+      feedGroup,
+      feedId,
+      newRole,
+    }: {
+      userId: string;
+      feedGroup: string;
+      feedId: string;
+      newRole: string;
+    } = req.body;
+    console.log("Updating role for user:", userId, "to", newRole);
+    const feed = client.feeds.feed(feedGroup, feedId);
+    const response = await feed.updateFeedMembers({
+      operation: "upsert",
+      members: [
+        {
+          user_id: userId,
+          role: newRole,
+        },
+      ],
+    });
+
+    res.json({ message: "User role updated successfully", response });
+  } catch (err: any) {
+    console.error("Error updating user role:", err);
     res.status(500).json({ error: err.message });
   }
 });
