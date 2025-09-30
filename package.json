@@ -12,7 +12,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@stream-io/node-sdk": "^0.6.7",
+    "@stream-io/node-sdk": "^0.7.0",
     "@stream-io/video-react-sdk": "^1.21.1",
     "dotenv": "^17.2.2",
     "express": "^4.21.2"
